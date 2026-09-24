@@ -321,8 +321,12 @@
     table.appendChild(tr1);
 
     // 第二行：各地区（每类指标最后一列 = 合计，加 col-total 高亮）
+    //
+    // ⚠️ 这里**不要**再补一个空的占位 th！
+    // 第一行的「指标」是 rowSpan=2，浏览器已把它占用了第 2 行的第 1 列；
+    // 若此处再加空 th，它会被塞到第 2 列，导致后续 16 个地区表头
+    // 整体右移一列、与数据行错位（表现为「标签和数据错位」）。
     var tr2 = document.createElement('tr');
-    tr2.appendChild(document.createElement('th'));
     trows.forEach(function (row) {
       var n = row.charts.length;
       row.charts.forEach(function (ch, ci) {
