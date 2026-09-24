@@ -33,8 +33,13 @@
     if (unit === '万吨') return Math.round(v);
     return v.toFixed(0);
   }
+  // X 轴刻度：只在「每月 1 号」打一个标签，其余返回空串。
+  // 关键点：366 点的 category 轴若逐点都返回「N月」，ECharts 抽稀后会出现
+  // 「01月 01月 02月 02月 …」的重复标签（同一月被抽到两次），故必须只打首日。
   function monthLabel(md) {
-    return (parseInt(String(md).split('-')[0], 10)) + '月';
+    var p = String(md).split('-');
+    if (p[1] !== '01') return '';
+    return (parseInt(p[0], 10)) + '月';
   }
   function dayLabel(md) {
     var p = String(md).split('-');
@@ -205,7 +210,7 @@
     if (S.shot) {
       // 截图模式：跳过懒加载，全部图表立即初始化并固定高度，确保整页截图不空缺
       S.items.forEach(function (it) {
-        it.el.style.height = '260px';
+        it.el.style.height = '280px';
         lazyInit(it.el);
         if (it.inst) it.inst.resize();
       });
@@ -315,13 +320,15 @@
     });
     table.appendChild(tr1);
 
-    // 第二行：各地区
+    // 第二行：各地区（每类指标最后一列 = 合计，加 col-total 高亮）
     var tr2 = document.createElement('tr');
     tr2.appendChild(document.createElement('th'));
     trows.forEach(function (row) {
-      row.charts.forEach(function (ch) {
+      var n = row.charts.length;
+      row.charts.forEach(function (ch, ci) {
         var th = document.createElement('th');
         th.textContent = ch.colName;
+        if (ci === n - 1) th.className = 'col-total';
         tr2.appendChild(th);
       });
     });
@@ -337,14 +344,18 @@
       th.textContent = label;
       tr.appendChild(th);
       trows.forEach(function (row) {
-        row.charts.forEach(function (ch) {
+        var n = row.charts.length;
+        row.charts.forEach(function (ch, ci) {
           var td = document.createElement('td');
           var v = (ch.table && ch.table.values) ? ch.table.values[ri] : null;
           td.textContent = fmtVal(v, row.unit);
+          var cls = [];
+          if (ci === n - 1) cls.push('col-total');
           // 环比 / 同比着色：正值红、负值绿
           if (ri >= 3 && v !== null && v !== undefined && !isNaN(v)) {
-            td.className = v > 0 ? 'up' : (v < 0 ? 'down' : '');
+            cls.push(v > 0 ? 'up' : (v < 0 ? 'down' : ''));
           }
+          if (cls.length) td.className = cls.filter(Boolean).join(' ');
           tr.appendChild(td);
         });
       });
@@ -747,7 +758,7 @@
       expanded = !expanded;
       S.items.forEach(function (it) {
         if (expanded) lazyInit(it.el);
-        it.el.style.height = expanded ? '320px' : '236px';
+        it.el.style.height = expanded ? '340px' : '270px';
         if (it.inst) it.inst.resize();
       });
       this.textContent = expanded ? '恢复高度' : '全部展开';
@@ -760,8 +771,7 @@
       t = setTimeout(function () {
         S.items.forEach(function (it) { if (it.inst) it.inst.resize(); });
       }, 160);
-    });
-  }
+    });  }
 
   bindUI();
   boot();

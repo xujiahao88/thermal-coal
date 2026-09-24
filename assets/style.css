@@ -104,16 +104,22 @@ main{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
   display:grid;gap:12px;
   grid-template-columns:repeat(5,minmax(0,1fr));
 }
-/* 4 图并列等比例（1×4），不余空位 */
-.grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
-@media(max-width:980px){.grid.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* 4 图并列等比例（1×4），不余空位。
+   注意：必须让 4 张图（山西/陕西/内蒙/合计）**始终同处一行**，
+   否则「合计」会被挤到第二行、在小屏上极易被误认为「没显示」。
+   故只在很窄（<760px）时才降为 2 列 / 1 列。 */
+.grid.cols-4{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  align-items:stretch;
+}
+@media(max-width:900px){.grid.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.grid.cols-4{grid-template-columns:1fr}}
 /* 一行两图（2×2） */
 .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
 @media(max-width:680px){.grid.cols-2{grid-template-columns:1fr}}
-@media (max-width:1700px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media (max-width:1360px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:1000px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* 通用 grid 的中断点同样放宽，避免 4 列被提前打断 */
+@media (max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:680px){.grid{grid-template-columns:1fr}}
 
 .card{
@@ -126,7 +132,7 @@ main{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
 }
 .card-head .t{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.3}
 .card-head .u{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
-.chart{width:100%;height:236px}
+.chart{width:100%;height:270px}
 .card-foot{
   padding:5px 10px;border-top:1px solid var(--line-soft);
   display:flex;align-items:center;justify-content:space-between;
@@ -184,8 +190,13 @@ main{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
 }
 .summary-table .row-label{background:#f4f6fa;font-weight:500;color:var(--ink-2)}
 .summary-table tbody tr:nth-child(even){background:#fbfcfd}
+/* 「合计」列（每类指标的第 4 列）加淡蓝底 + 左分隔线，避免被误认为缺列 */
+.summary-table .col-total{background:#eef4fd}
+.summary-table .metric-head{border-left:2px solid var(--line)}
 .summary-table td.up{background:#ffdede;color:#c0392b}
 .summary-table td.down{background:#e2f5e2;color:#1e8449}
+.summary-table td.up.col-total{background:#fbd8d8}
+.summary-table td.down.col-total{background:#d9efd9}
 .summary-table td:empty::before{content:'-'}
 
 @media (max-width:1260px){
