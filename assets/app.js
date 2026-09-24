@@ -8,7 +8,7 @@
 
   var S = {
     meta: null, xaxis: [],
-    dsId: null, data: null,
+    dsId: null, data: null,       // data = 全部数据集合并后的视图
     years: [], hidden: {},
     connect: true, zero: false, sync: false,
     items: [],            // {inst, el, cfg}
@@ -59,24 +59,40 @@
   function boot() {
     var params = new URLSearchParams(location.search);
     S.shot = params.get('shot') === '1';   // 截图模式：强制全量渲染，便于无头整页截图
-    var wanted = params.get('ds');
-    if (window.__FENWEI_DATA) {
-      var D = window.__FENWEI_DATA;
-      S.meta = D.meta;
-      S.xaxis = D.meta.xaxis || [];
-      renderTabs();
-      var first = wanted && D.meta.datasets.some(function (d) { return d.id === wanted; })
-        ? wanted : D.meta.datasets[0].id;
-      switchTo(first);
+
+    function mount() {
+      setSubText();
+      S.data = assembleAll();
+      if (!S.data) {
+        $('loading').innerHTML = '<div style="color:#c0392b">没有可用的数据集</div>';
+        return;
+      }
+      S.years = collectYears(S.data);
+      renderYearToggles();
+      render();
+      var _ld = $('loading'); if (_ld) _ld.style.display = 'none';
+      if (new URLSearchParams(location.search).get('debug') === '1') dumpDebug();
+    }
+
+    // data.js 内联 → 直接用（无需异步 fetch，适合本地/无头/静态托管）
+    if (window.__FENWEI_DATA && window.__FENWEI_DATA.meta) {
+      S.meta = window.__FENWEI_DATA.meta;
+      S.xaxis = S.meta.xaxis || [];
+      mount();
       return;
     }
+
+    // 兜底：逐个 fetch meta.json 与各数据集 json
     loadJSON('data/meta.json').then(function (meta) {
       S.meta = meta;
       S.xaxis = meta.xaxis || [];
-      renderTabs();
-      var first = wanted && meta.datasets.some(function (d) { return d.id === wanted; })
-        ? wanted : meta.datasets[0].id;
-      switchTo(first);
+      return Promise.all(meta.datasets.map(function (d) {
+        return loadJSON('data/' + d.id + '.json').catch(function () { return null; });
+      })).then(function (arr) {
+        window.__FENWEI_DATA = { meta: meta };
+        meta.datasets.forEach(function (d, i) { if (arr[i]) window.__FENWEI_DATA[d.id] = arr[i]; });
+        mount();
+      });
     }).catch(function (e) {
       $('loading').innerHTML =
         '<div style="color:#c0392b">数据加载失败：' + e.message + '</div>' +
@@ -88,56 +104,41 @@
     });
   }
 
-  // ---------------------------------------------------------- Tab
+  // ---------------------------------------------------------- 数据集装配（单页全展示）
+  //
+  // 本站点把「产量 / 产能利用率 / 开工率 / 库存」四类指标**合并在一页**展示，
+  // 没有 tab 切换：顶部汇总表把所有指标的 本期/上期/去年同期/环比/同比 拼成一张宽表，
+  // 下面按指标块依次铺开季节图。数据集顺序即 meta.datasets 的顺序。
 
-  function renderTabs() {
-    var box = $('tabs');
-    box.innerHTML = '';
-    S.meta.datasets.forEach(function (d) {
-      var b = document.createElement('button');
-      b.className = 'tab' + (d.id === S.dsId ? ' active' : '');
-      b.innerHTML = d.name + '<span class="n">' + d.count + '图</span>';
-      b.onclick = function () { switchTo(d.id); };
-      box.appendChild(b);
-    });
-    var upd = S.meta.datasets[0].updated || '-';
-    $('sub').innerHTML = '数据更新至 <b>' + upd + '</b> · 共 <b>' +
-      S.meta.datasets.reduce(function (a, d) { return a + d.count; }, 0) + '</b> 张图';
-    $('footNote').textContent = '数据提取时间：' + (S.meta.generatedAt || '-') +
-      ' · 来源：汾渭动力煤.xlsx（动力煤全样本160家）';
+  function assembleAll() {
+    var ids = S.meta.datasets.map(function (d) { return d.id; });
+    var parts = ids.map(function (id) {
+      return (window.__FENWEI_DATA && window.__FENWEI_DATA[id]) || null;
+    }).filter(Boolean);
+    if (!parts.length) return null;
+
+    // 汇总表：每类指标占一组列（各 4 列）
+    var tableRows = [];
+    parts.forEach(function (p) { tableRows = tableRows.concat(p.rows); });
+
+    return {
+      id: 'all',
+      name: '汾渭动力煤（晋陕蒙160家）',
+      cols: 4,
+      rows: parts.reduce(function (a, p) { return a.concat(p.rows); }, []),
+      table_rows: tableRows,
+      _parts: parts,
+    };
   }
 
-  function switchTo(id) {
-    if (S.dsId === id) return;
-    S.dsId = id;
-    Array.prototype.forEach.call($('tabs').children, function (b, i) {
-      b.className = 'tab' + (S.meta.datasets[i].id === id ? ' active' : '');
-    });
-
-    // 如果 data.js 已内联，直接用（无需异步 fetch，适合本地/无头/静态托管）
-    if (window.__FENWEI_DATA && window.__FENWEI_DATA[id]) {
-      S.data = window.__FENWEI_DATA[id];
-      S.years = collectYears(S.data);
-      renderYearToggles();
-      render();
-      var _ld = $('loading'); if (_ld) _ld.style.display = 'none';
-      if (new URLSearchParams(location.search).get('debug') === '1') dumpDebug();
-      return;
-    }
-
-    $('loading').style.display = 'block';
-    $('main').innerHTML = '';
-    $('main').appendChild($('loading'));
-    disposeAll();
-    loadJSON('data/' + id + '.json').then(function (d) {
-      S.data = d;
-      S.years = collectYears(d);
-      renderYearToggles();
-      render();
-      $('loading').style.display = 'none';
-    }).catch(function (e) {
-      $('loading').innerHTML = '<div style="color:#c0392b">数据集加载失败：' + e.message + '</div>';
-    });
+  function setSubText() {
+    var upd = S.meta.datasets.reduce(function (a, d) {
+      return (!a || d.updated > a) ? d.updated : a;
+    }, '');
+    var total = S.meta.datasets.reduce(function (a, d) { return a + d.count; }, 0);
+    $('sub').innerHTML = '数据更新至 <b>' + upd + '</b> · 共 <b>' + total + '</b> 张图（四类指标同页展示）';
+    $('footNote').textContent = '数据提取时间：' + (S.meta.generatedAt || '-') +
+      ' · 来源：汾渭动力煤.xlsx（动力煤全样本160家）';
   }
 
   function collectYears(d) {
@@ -193,10 +194,10 @@
     main.innerHTML = '';
     S.items = [];
 
-    // 数据表在上
+    // 数据表在上（四类指标拼成一张宽表）
     main.appendChild(buildTableSection());
 
-    // 图表在下
+    // 图表在下：按指标块依次铺开，每块前加一条分隔标题
     S.data.rows.forEach(function (row) {
       main.appendChild(buildRowBlock(row));
     });
@@ -210,8 +211,8 @@
       });
     } else {
       observe();
-      // 首屏直接初始化，避免静态打开时懒加载不触发
-      S.items.slice(0, 20).forEach(function (it) { lazyInit(it.el); });
+      // 首屏直接初始化，避免静态打开时懒加载不触发（四类共 16 图，全部预热）
+      S.items.slice(0, 24).forEach(function (it) { lazyInit(it.el); });
     }
   }
 
@@ -249,9 +250,12 @@
 
     var head = document.createElement('div');
     head.className = 'row-head';
+    // 单页模式下 tab 已取消，每个指标块自己就是"标题行"，标注数据区间
+    var span = rowSpan(row);
     head.innerHTML =
       '<h2>' + row.name +
       (row.unit ? '<span class="unit">单位：' + row.unit + '</span>' : '') +
+      (span ? '<span class="span">' + span + '</span>' : '') +
       '</h2><span class="spacer"></span>' +
       '<span class="hint">' + row.charts.length + ' 张 · 点击图例可隐藏某年</span>';
     block.appendChild(head);
@@ -264,6 +268,18 @@
     });
     block.appendChild(grid);
     return block;
+  }
+
+  // 该指标块的年份覆盖区间（如「2022–2026」；开工率会显示「2024-07 起」）
+  function rowSpan(row) {
+    var years = [];
+    row.charts.forEach(function (c) {
+      (c.years || []).forEach(function (y) { if (years.indexOf(y) < 0) years.push(y); });
+    });
+    if (!years.length) return '';
+    years.sort(function (a, b) { return a - b; });
+    var first = years[0], last = years[years.length - 1];
+    return first === last ? String(first) : (first + '–' + last);
   }
 
   function buildTableSection() {

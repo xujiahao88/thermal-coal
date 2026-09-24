@@ -92,6 +92,11 @@ main{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
   display:flex;align-items:center;gap:8px;
 }
 .row-head h2 .unit{font-size:11px;font-weight:400;color:var(--ink-3)}
+.row-head h2 .span{
+  font-size:10.5px;font-weight:400;color:var(--accent);
+  background:var(--accent-soft);border-radius:20px;padding:1px 8px;
+  white-space:nowrap;
+}
 .row-head .spacer{flex:1}
 .row-head .hint{font-size:11px;color:var(--ink-3)}
 
