@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>汾渭动力煤周度数据 · 季节性图谱</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <h1>汾渭动力煤周度数据 · 季节性图谱</h1>
+      <p class="sub" id="sub">加载中…</p>
+    </div>
+    <div class="toolbar">
+      <div class="year-box" id="yearToggles"></div>
+      <label class="ctl chk">
+        <input type="checkbox" id="optConnect" checked>
+        <span>连断点</span>
+      </label>
+      <label class="ctl chk">
+        <input type="checkbox" id="optZero">
+        <span>Y轴含0</span>
+      </label>
+      <label class="ctl chk">
+        <input type="checkbox" id="optSync">
+        <span>同行同Y</span>
+      </label>
+      <button class="btn" id="btnExpand">全部展开</button>
+      <button class="btn" id="btnTop">回到顶部</button>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs"></nav>
+</header>
+
+<main id="main">
+  <div class="loading" id="loading">正在加载数据…</div>
+</main>
+
+<footer class="foot">
+  <span id="footNote"></span>
+  <span class="disc">内容由 AI 基于公开与用户数据整理，仅供参考，不构成投资建议</span>
+</footer>
+
+<script src="assets/vendor/echarts.min.js"></script>
+<!-- v= 版本号由 push_site.py 在数据变更时自动刷新，避免浏览器缓存旧 tab 列表 -->
+<script src="data/data.js?v=20260924154301"></script>
+<script src="assets/app.js"></script>
+<script>// 截图模式：只保留数据主体
+if (new URLSearchParams(location.search).get('shot') === '1') document.body.classList.add('shot-mode');
+</script>
+</body>
+</html>
