@@ -100,27 +100,43 @@ main{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
 .row-head .spacer{flex:1}
 .row-head .hint{font-size:11px;color:var(--ink-3)}
 
+/* 数据源开关 */
+.src-box{display:flex;gap:3px;margin-right:8px}
+.src{
+  padding:3px 11px;border:1px solid var(--line);border-radius:20px;background:#fff;
+  font-size:11.5px;cursor:pointer;color:var(--ink-2);transition:.12s;font-family:inherit;
+  white-space:nowrap;
+}
+.src:hover{border-color:var(--accent);color:var(--accent)}
+.src.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+
 .grid{
   display:grid;gap:12px;
-  grid-template-columns:repeat(5,minmax(0,1fr));
-}
-/* 4 图并列等比例（1×4），不余空位。
-   注意：必须让 4 张图（山西/陕西/内蒙/合计）**始终同处一行**，
-   否则「合计」会被挤到第二行、在小屏上极易被误认为「没显示」。
-   故只在很窄（<760px）时才降为 2 列 / 1 列。 */
-.grid.cols-4{
   grid-template-columns:repeat(4,minmax(0,1fr));
-  align-items:stretch;
 }
-@media(max-width:900px){.grid.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:560px){.grid.cols-4{grid-template-columns:1fr}}
-/* 一行两图（2×2） */
+/* 每块按自己的图数决定列数（.cols-N 由 app.js 按 row.charts.length 动态加）。
+   关键：同组图必须**始终同行**，否则末位图（常是「合计」）会被挤到第二行、
+   用户会误判为「数据没显示」。故只在很窄时才降列。 */
+.grid.cols-1{grid-template-columns:minmax(0,1fr)}
 .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-@media(max-width:680px){.grid.cols-2{grid-template-columns:1fr}}
+.grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.grid.cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.grid.cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.grid.cols-7{grid-template-columns:repeat(7,minmax(0,1fr))}
+.grid.cols-8{grid-template-columns:repeat(8,minmax(0,1fr))}
 
-/* 通用 grid 的中断点同样放宽，避免 4 列被提前打断 */
-@media (max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:680px){.grid{grid-template-columns:1fr}}
+@media (max-width:1400px){
+  .grid.cols-7,.grid.cols-8{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .grid.cols-5,.grid.cols-6{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:1100px){
+  .grid,.grid.cols-5,.grid.cols-6,.grid.cols-7,.grid.cols-8{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid.cols-3,.grid.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:680px){
+  .grid,.grid[class*="cols-"]{grid-template-columns:minmax(0,1fr)}
+}
 
 .card{
   background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
@@ -133,6 +149,10 @@ main{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
 .card-head .t{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.3}
 .card-head .u{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
 .chart{width:100%;height:270px}
+/* 图多的块（国际煤价 7-9 图）卡片窄，图矮一点更协调 */
+.grid.cols-6 .chart,.grid.cols-7 .chart,.grid.cols-8 .chart{height:232px}
+/* 窄卡片放不下 5 列表格（表头是日期），直接隐藏——顶部汇总表已有全部数值 */
+.grid.cols-6 .data-table,.grid.cols-7 .data-table,.grid.cols-8 .data-table{display:none}
 .card-foot{
   padding:5px 10px;border-top:1px solid var(--line-soft);
   display:flex;align-items:center;justify-content:space-between;

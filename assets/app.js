@@ -8,7 +8,8 @@
 
   var S = {
     meta: null, xaxis: [],
-    dsId: null, data: null,       // data = 全部数据集合并后的视图
+    dsId: null, data: null,       // data = 当前数据源视图（含全部指标块）
+    src: 'all',                   // 当前数据源：'all' 或 meta.sources[].id
     years: [], hidden: {},
     connect: true, zero: false, sync: false,
     items: [],            // {inst, el, cfg}
@@ -24,13 +25,16 @@
     if (unit === '%') return (v * 100).toFixed(1) + '%';
     if (unit === '元/吨') return Math.round(v).toLocaleString('zh-CN');
     if (unit === '万吨') return v.toFixed(1);
+    if (unit === '天') return v.toFixed(1);
+    if (unit === '美元/吨') return v.toFixed(1);
     return v.toFixed(2);
   }
   function fmtAxis(v, unit) {
     if (unit === '%') return (v * 100).toFixed(0) + '%';
     if (unit === '元/吨') return Math.round(v);
+    if (unit === '美元/吨') return v.toFixed(0);
     if (Math.abs(v) >= 10000) return (v / 10000).toFixed(1) + '万';
-    if (unit === '万吨') return Math.round(v);
+    if (unit === '万吨' || unit === '天') return Math.round(v);
     return v.toFixed(0);
   }
   // X 轴刻度：只在「每月 1 号」打一个标签，其余返回空串。
@@ -61,23 +65,33 @@
     });
   }
 
+  // 装配 + 渲染（提到 boot 外层，便于 __TC 调试钩子与数据源切换复用）
+  function mount(keepYears) {
+    S.data = assembleAll();
+    if (!S.data) {
+      var ld0 = $('loading');
+      if (ld0) ld0.innerHTML = '<div style="color:#c0392b">没有可用的数据集</div>';
+      return;
+    }
+    S.years = collectYears(S.data);
+    if (!keepYears) S.hidden = {};
+    else {
+      // 切换数据源时，把已隐藏但新视图里不存在的年份清掉
+      Object.keys(S.hidden).forEach(function (y) {
+        if (S.years.indexOf(Number(y)) < 0) delete S.hidden[y];
+      });
+    }
+    setSubText();
+    renderSourceToggles();
+    renderYearToggles();
+    render();
+    var _ld = $('loading'); if (_ld) _ld.style.display = 'none';
+    if (new URLSearchParams(location.search).get('debug') === '1') dumpDebug();
+  }
+
   function boot() {
     var params = new URLSearchParams(location.search);
     S.shot = params.get('shot') === '1';   // 截图模式：强制全量渲染，便于无头整页截图
-
-    function mount() {
-      setSubText();
-      S.data = assembleAll();
-      if (!S.data) {
-        $('loading').innerHTML = '<div style="color:#c0392b">没有可用的数据集</div>';
-        return;
-      }
-      S.years = collectYears(S.data);
-      renderYearToggles();
-      render();
-      var _ld = $('loading'); if (_ld) _ld.style.display = 'none';
-      if (new URLSearchParams(location.search).get('debug') === '1') dumpDebug();
-    }
 
     // data.js 内联 → 直接用（无需异步 fetch，适合本地/无头/静态托管）
     if (window.__FENWEI_DATA && window.__FENWEI_DATA.meta) {
@@ -111,24 +125,45 @@
 
   // ---------------------------------------------------------- 数据集装配（单页全展示）
   //
-  // 本站点把「产量 / 产能利用率 / 开工率 / 库存」四类指标**合并在一页**展示，
-  // 没有 tab 切换：顶部汇总表把所有指标的 本期/上期/去年同期/环比/同比 拼成一张宽表，
-  // 下面按指标块依次铺开季节图。数据集顺序即 meta.datasets 的顺序。
+  // 本站点把各数据源的指标块**合并在一页**展示，没有 tab 切换：
+  // 顶部汇总表把当前数据源所有指标的 本期/上期/去年同期/环比/同比 拼成一张宽表，
+  // 下面按指标块依次铺开季节图。
+  //
+  // 多数据源：meta.sources = [{id,name}]；每个 dataset 带 source 字段。
+  // 顶部「数据源」开关切换 S.src（'all' = 全部）。
+
+  function sourcesOf() {
+    var s = S.meta && S.meta.sources;
+    return (s && s.length > 1) ? s : null;
+  }
 
   function assembleAll() {
-    var ids = S.meta.datasets.map(function (d) { return d.id; });
-    var parts = ids.map(function (id) {
-      return (window.__FENWEI_DATA && window.__FENWEI_DATA[id]) || null;
+    var srcs = sourcesOf();
+    var list = S.meta.datasets.filter(function (d) {
+      if (!srcs || S.src === 'all') return true;
+      return (d.source || 'fenwei') === S.src;
+    });
+    var parts = list.map(function (d) {
+      return (window.__FENWEI_DATA && window.__FENWEI_DATA[d.id]) || null;
     }).filter(Boolean);
     if (!parts.length) return null;
 
-    // 汇总表：每类指标占一组列（各 4 列）
+    // 汇总表：每类指标占一组列（各 = 该指标的图数）
     var tableRows = [];
     parts.forEach(function (p) { tableRows = tableRows.concat(p.rows); });
 
+    var name;
+    if (!srcs) name = S.meta.datasets[0] ? S.meta.datasets[0].name : '动力煤';
+    else if (S.src === 'all') name = '全部数据源';
+    else {
+      var hit = srcs.filter(function (x) { return x.id === S.src; })[0];
+      name = hit ? hit.name : S.src;
+    }
+    if (name.indexOf('周度数据') < 0 && name.indexOf('数据源') < 0) name += '';
+
     return {
       id: 'all',
-      name: '汾渭动力煤（晋陕蒙160家）',
+      name: name,
       cols: 4,
       rows: parts.reduce(function (a, p) { return a.concat(p.rows); }, []),
       table_rows: tableRows,
@@ -141,9 +176,34 @@
       return (!a || d.updated > a) ? d.updated : a;
     }, '');
     var total = S.meta.datasets.reduce(function (a, d) { return a + d.count; }, 0);
-    $('sub').innerHTML = '数据更新至 <b>' + upd + '</b> · 共 <b>' + total + '</b> 张图（四类指标同页展示）';
+    var shown = S.data ? S.data.rows.length : 0;
+    var ncharts = S.data ? S.data.rows.reduce(function (a, r) { return a + r.charts.length; }, 0) : 0;
+    $('sub').innerHTML = '数据更新至 <b>' + upd + '</b> · 当前 <b>' + ncharts +
+      '</b> 张图 / 共 <b>' + total + '</b> 张';
     $('footNote').textContent = '数据提取时间：' + (S.meta.generatedAt || '-') +
-      ' · 来源：汾渭动力煤.xlsx（动力煤全样本160家）';
+      ' · ' + (S.meta.sourceNote || '汾渭动力煤.xlsx + 国联民生煤炭高频数据');
+  }
+
+  // 数据源开关（仅当 meta.sources 有多个源时显示）
+  function renderSourceToggles() {
+    var box = $('srcToggles');
+    if (!box) return;
+    var srcs = sourcesOf();
+    if (!srcs) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    var all = [{ id: 'all', name: '全部' }].concat(srcs);
+    box.innerHTML = '';
+    all.forEach(function (s) {
+      var b = document.createElement('button');
+      b.className = 'src' + (S.src === s.id ? ' on' : '');
+      b.textContent = s.name;
+      b.onclick = function () {
+        if (S.src === s.id) return;
+        S.src = s.id;
+        mount(true);
+      };
+      box.appendChild(b);
+    });
   }
 
   function collectYears(d) {
@@ -267,7 +327,9 @@
 
     var grid = document.createElement('div');
     grid.className = 'grid';
-    if (S.data && S.data.cols) grid.className += ' cols-' + S.data.cols;
+    // 每块按自己的图数决定列数（各源/各指标块图数不同：2/3/5/7/8/9…）
+    var n = Math.max(1, row.charts.length);
+    grid.className += ' cols-' + (n <= 8 ? n : 8);
     row.charts.forEach(function (cfg) {
       grid.appendChild(makeCard(cfg, row));
     });
@@ -792,5 +854,26 @@
     });  }
 
   bindUI();
+
+  // 调试钩子（无副作用，便于自动化探测/排障）
+  window.__TC = {
+    state: function () {
+      var rows = (S.data && S.data.rows) || [];
+      return {
+        src: S.src,
+        sources: (S.meta && S.meta.sources || []).map(function (s) { return s.id; }),
+        datasets: (S.meta && S.meta.datasets || []).length,
+        rows: rows.length,
+        charts: rows.reduce(function (a, r) { return a + r.charts.length; }, 0),
+        years: S.years.slice(),
+      };
+    },
+    setSrc: function (id) { S.src = id; mount(true); return window.__TC.state(); },
+    err: null,
+  };
+  window.addEventListener('error', function (e) {
+    window.__TC.err = String((e && e.message) || e) + ' @' + (e && e.lineno);
+  });
+
   boot();
 })();
