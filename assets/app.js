@@ -420,10 +420,24 @@
   function latestText(cfg) {
     var n = cfg.years.length;
     if (n < 2) return '';
-    var cur = lastOf(cfg.series[n - 1]);
-    var prv = lastOf(cfg.series[n - 2]);
-    if (cur === null) return '最新：<b>-</b>';
+    var curS = cfg.series[n - 1] || [];
+    // 找本年最后一个有值点的「索引」——同比必须跟去年「同一索引」（同期）比
+    var idx = -1;
+    for (var i = curS.length - 1; i >= 0; i--) if (curS[i] !== null) { idx = i; break; }
+    if (idx < 0) return '最新：<b>-</b>';
+    var cur = curS[idx];
     var txt = '最新：<b>' + fmtVal(cur, cfg.unit) + '</b>';
+    // 同比：取去年序列在「同期」最近的采样点。本站在日轴上按周布点、各年相位不同
+    //    （2026 落在 idx%7==6、2025 落在 idx%7==0），严格同索引会取到空值；日度数据下
+    //    本算法自然退化为「同一天」。⚠️ 不要用 lastOf(去年序列)：那是去年 12-31 的年末低值，
+    //    会拿「本年 9 月」比「去年 12 月」，算出方向相反的错误百分比。
+    var prvS = cfg.series[n - 2] || [];
+    var prv = null, best = 99;
+    for (var j = Math.max(0, idx - 10); j <= Math.min(prvS.length - 1, idx + 10); j++) {
+      if (prvS[j] === null || prvS[j] === undefined) continue;
+      var dist = Math.abs(j - idx);
+      if (dist < best) { best = dist; prv = prvS[j]; }
+    }
     if (prv !== null && prv !== 0) {
       var d = cur - prv;
       var pct = (d / Math.abs(prv)) * 100;
