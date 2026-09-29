@@ -171,10 +171,8 @@
     visibleDatasets().forEach(function (d) {
       var b = document.createElement('button');
       b.className = 'tab' + (d.id === S.dsId ? ' active' : '');
-      var srcs = sourcesOf();
-      var tag = (srcs && S.src === 'all')
-        ? '<span class="src-tag">' + (d.source === 'glms' ? '国联' : '汾渭') + '</span>' : '';
-      b.innerHTML = tag + (d.short || d.name) + '<span class="n">' + d.count + '图</span>';
+      // 用户要求去掉「国联/汾渭」来源小标签：短名本身已唯一，无需来源标注
+      b.innerHTML = (d.short || d.name) + '<span class="n">' + d.count + '图</span>';
       b.onclick = function () { switchTo(d.id); };
       box.appendChild(b);
     });
@@ -207,7 +205,7 @@
       '　数据更新至 <b>' + (d ? d.updated : '-') + '</b> · 本页 <b>' +
       (d ? d.count : 0) + '</b> 图 / 全站 <b>' + total + '</b> 图';
     $('footNote').textContent = '数据提取时间：' + (S.meta.generatedAt || '-') +
-      ' · 来源：汾渭动力煤.xlsx + 国联民生《煤炭行业高频数据》';
+      ' · 来源：汾渭动力煤.xlsx + 《煤炭行业高频数据》';
   }
 
   function collectYears(d) {
@@ -551,7 +549,14 @@
     var cur = curS[idx];
     var txt = '最新：<b>' + fmtVal(cur, cfg.unit) + '</b>';
     var prvS = cfg.series[n - 2] || [];
-    var prv = (idx < prvS.length && prvS[idx] !== undefined) ? prvS[idx] : null;
+    // 去年同槽 ±3 找最近值（周度数据逐年有 0~3 天漂移）
+    var prv = null;
+    for (var off = 0; off <= 3 && prv === null; off++) {
+      for (var _sgn = 0; _sgn < 2 && prv === null; _sgn++) {
+        var c = idx + (_sgn ? off : -off);
+        if (c >= 0 && c < prvS.length && prvS[c] !== null && prvS[c] !== undefined) prv = prvS[c];
+      }
+    }
     if (prv !== null && prv !== 0) {
       var d = cur - prv;
       var pct = (d / Math.abs(prv)) * 100;
