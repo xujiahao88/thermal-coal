@@ -1,5 +1,10 @@
-/* 汾渭动力煤周度数据 · 季节性图谱
-   数据由 scripts/build_data.py 从《汾渭动力煤.xlsx》提取 */
+/* 动力煤季节性图谱（汾渭 + 国联民生）
+   数据由 scripts/build_data.py（汾渭）与 scripts/build_data_glms.py（国联民生）提取
+
+   布局仿汾渭站：**一个数据集 = 一个页面（顶部 tab 切换）**，
+   数据源开关（全部/汾渭/国联民生）只决定显示哪些 tab。
+   每页从上到下：KPI 头条 → 汇总表 → 指标块季节图。
+   「重点序列」（合计 / 25省合计 / 环渤海 / 大秦线 / 澳洲5500 等）高亮并排最前。 */
 (function () {
   'use strict';
 
@@ -8,8 +13,8 @@
 
   var S = {
     meta: null, xaxis: [],
-    dsId: null, data: null,       // data = 当前数据源视图（含全部指标块）
-    src: 'all',                   // 当前数据源：'all' 或 meta.sources[].id
+    src: 'all',                  // 数据源过滤：'all' | 'fenwei' | 'glms'
+    dsId: null, data: null,      // 当前数据集（一页一个）
     years: [], hidden: {},
     connect: true, zero: false, sync: false,
     items: [],            // {inst, el, cfg}
@@ -38,8 +43,8 @@
     return v.toFixed(0);
   }
   // X 轴刻度：只在「每月 1 号」打一个标签，其余返回空串。
-  // 关键点：366 点的 category 轴若逐点都返回「N月」，ECharts 抽稀后会出现
-  // 「01月 01月 02月 02月 …」的重复标签（同一月被抽到两次），故必须只打首日。
+  // 366 点 category 轴若逐点都返回「N月」，ECharts 抽稀后会出现
+  // 「01月 01月 02月 02月 …」的重复标签，故必须只打首日。
   function monthLabel(md) {
     var p = String(md).split('-');
     if (p[1] !== '01') return '';
@@ -65,43 +70,37 @@
     });
   }
 
-  // 装配 + 渲染（提到 boot 外层，便于 __TC 调试钩子与数据源切换复用）
-  function mount(keepYears) {
-    S.data = assembleAll();
-    if (!S.data) {
-      var ld0 = $('loading');
-      if (ld0) ld0.innerHTML = '<div style="color:#c0392b">没有可用的数据集</div>';
-      return;
-    }
-    S.years = collectYears(S.data);
-    if (!keepYears) S.hidden = {};
-    else {
-      // 切换数据源时，把已隐藏但新视图里不存在的年份清掉
-      Object.keys(S.hidden).forEach(function (y) {
-        if (S.years.indexOf(Number(y)) < 0) delete S.hidden[y];
-      });
-    }
-    setSubText();
-    renderSourceToggles();
-    renderYearToggles();
-    render();
-    var _ld = $('loading'); if (_ld) _ld.style.display = 'none';
-    if (new URLSearchParams(location.search).get('debug') === '1') dumpDebug();
-  }
-
   function boot() {
     var params = new URLSearchParams(location.search);
-    S.shot = params.get('shot') === '1';   // 截图模式：强制全量渲染，便于无头整页截图
+    S.shot = params.get('shot') === '1';   // 截图模式：当前页全量渲染，便于无头整页截图
+    var wantedSrc = params.get('src');
+    var wantedDs = params.get('ds');
 
-    // data.js 内联 → 直接用（无需异步 fetch，适合本地/无头/静态托管）
+    function init() {
+      if (wantedSrc && (wantedSrc === 'all' || S.meta.sources.some(function (s) { return s.id === wantedSrc; }))) {
+        S.src = wantedSrc;
+      }
+      renderSourceToggles();
+      renderTabs();
+      var list = visibleDatasets();
+      var first = list.length ? list[0].id : null;
+      if (wantedDs && list.some(function (d) { return d.id === wantedDs; })) first = wantedDs;
+      if (first) switchTo(first, true);
+      else {
+        var ld = $('loading');
+        if (ld) ld.innerHTML = '<div style="color:#c0392b">没有可用的数据集</div>';
+      }
+    }
+
+    // data.js 内联 → 直接用
     if (window.__FENWEI_DATA && window.__FENWEI_DATA.meta) {
       S.meta = window.__FENWEI_DATA.meta;
       S.xaxis = S.meta.xaxis || [];
-      mount();
+      init();
       return;
     }
 
-    // 兜底：逐个 fetch meta.json 与各数据集 json
+    // 兜底：逐个 fetch
     loadJSON('data/meta.json').then(function (meta) {
       S.meta = meta;
       S.xaxis = meta.xaxis || [];
@@ -110,81 +109,35 @@
       })).then(function (arr) {
         window.__FENWEI_DATA = { meta: meta };
         meta.datasets.forEach(function (d, i) { if (arr[i]) window.__FENWEI_DATA[d.id] = arr[i]; });
-        mount();
+        init();
       });
     }).catch(function (e) {
       $('loading').innerHTML =
-        '<div style="color:#c0392b">数据加载失败：' + e.message + '</div>' +
-        '<div style="margin-top:8px;color:#8a94a8;font-size:12px">' +
-        '请确认 data/ 目录下已有 meta.json 或 data.js。若直接用 file:// 打开，' +
-        '请使用 <code>data/data.js</code> 内联数据，或在项目目录运行 ' +
-        '<code>python -m http.server 8000</code> 后访问 ' +
-        '<code>http://localhost:8000</code>。</div>';
+        '<div style="color:#c0392b">数据加载失败：' + e.message + '</div>';
     });
   }
 
-  // ---------------------------------------------------------- 数据集装配（单页全展示）
-  //
-  // 本站点把各数据源的指标块**合并在一页**展示，没有 tab 切换：
-  // 顶部汇总表把当前数据源所有指标的 本期/上期/去年同期/环比/同比 拼成一张宽表，
-  // 下面按指标块依次铺开季节图。
-  //
-  // 多数据源：meta.sources = [{id,name}]；每个 dataset 带 source 字段。
-  // 顶部「数据源」开关切换 S.src（'all' = 全部）。
+  // ---------------------------------------------------------- 数据源开关
 
   function sourcesOf() {
     var s = S.meta && S.meta.sources;
     return (s && s.length > 1) ? s : null;
   }
 
-  function assembleAll() {
+  function visibleDatasets() {
     var srcs = sourcesOf();
-    var list = S.meta.datasets.filter(function (d) {
+    return S.meta.datasets.filter(function (d) {
       if (!srcs || S.src === 'all') return true;
       return (d.source || 'fenwei') === S.src;
     });
-    var parts = list.map(function (d) {
-      return (window.__FENWEI_DATA && window.__FENWEI_DATA[d.id]) || null;
-    }).filter(Boolean);
-    if (!parts.length) return null;
-
-    // 汇总表：每类指标占一组列（各 = 该指标的图数）
-    var tableRows = [];
-    parts.forEach(function (p) { tableRows = tableRows.concat(p.rows); });
-
-    var name;
-    if (!srcs) name = S.meta.datasets[0] ? S.meta.datasets[0].name : '动力煤';
-    else if (S.src === 'all') name = '全部数据源';
-    else {
-      var hit = srcs.filter(function (x) { return x.id === S.src; })[0];
-      name = hit ? hit.name : S.src;
-    }
-    if (name.indexOf('周度数据') < 0 && name.indexOf('数据源') < 0) name += '';
-
-    return {
-      id: 'all',
-      name: name,
-      cols: 4,
-      rows: parts.reduce(function (a, p) { return a.concat(p.rows); }, []),
-      table_rows: tableRows,
-      _parts: parts,
-    };
   }
 
-  function setSubText() {
-    var upd = S.meta.datasets.reduce(function (a, d) {
-      return (!a || d.updated > a) ? d.updated : a;
-    }, '');
-    var total = S.meta.datasets.reduce(function (a, d) { return a + d.count; }, 0);
-    var shown = S.data ? S.data.rows.length : 0;
-    var ncharts = S.data ? S.data.rows.reduce(function (a, r) { return a + r.charts.length; }, 0) : 0;
-    $('sub').innerHTML = '数据更新至 <b>' + upd + '</b> · 当前 <b>' + ncharts +
-      '</b> 张图 / 共 <b>' + total + '</b> 张';
-    $('footNote').textContent = '数据提取时间：' + (S.meta.generatedAt || '-') +
-      ' · ' + (S.meta.sourceNote || '汾渭动力煤.xlsx + 国联民生煤炭高频数据');
+  function srcName(id) {
+    var srcs = sourcesOf() || [];
+    var hit = srcs.filter(function (x) { return x.id === id; })[0];
+    return hit ? hit.name : id;
   }
 
-  // 数据源开关（仅当 meta.sources 有多个源时显示）
   function renderSourceToggles() {
     var box = $('srcToggles');
     if (!box) return;
@@ -200,10 +153,61 @@
       b.onclick = function () {
         if (S.src === s.id) return;
         S.src = s.id;
-        mount(true);
+        renderSourceToggles();
+        renderTabs();
+        var list = visibleDatasets();
+        if (list.length) switchTo(list[0].id, true);
       };
       box.appendChild(b);
     });
+  }
+
+  // ---------------------------------------------------------- Tab（一页一个数据集）
+
+  function renderTabs() {
+    var box = $('tabs');
+    if (!box) return;
+    box.innerHTML = '';
+    visibleDatasets().forEach(function (d) {
+      var b = document.createElement('button');
+      b.className = 'tab' + (d.id === S.dsId ? ' active' : '');
+      var srcs = sourcesOf();
+      var tag = (srcs && S.src === 'all')
+        ? '<span class="src-tag">' + (d.source === 'glms' ? '国联' : '汾渭') + '</span>' : '';
+      b.innerHTML = tag + (d.short || d.name) + '<span class="n">' + d.count + '图</span>';
+      b.onclick = function () { switchTo(d.id); };
+      box.appendChild(b);
+    });
+  }
+
+  function switchTo(id, force) {
+    if (S.dsId === id && !force) return;
+    S.dsId = id;
+    renderTabs();      // 重建 tab 行（高亮当前数据集）
+    S.data = window.__FENWEI_DATA[id];
+    if (!S.data) {
+      var ld0 = $('loading');
+      if (ld0) ld0.innerHTML = '<div style="color:#c0392b">数据集加载失败：' + id + '</div>';
+      return;
+    }
+    S.years = collectYears(S.data);
+    S.hidden = {};
+    setSubText();
+    renderYearToggles();
+    render();
+    var _ld = $('loading'); if (_ld) _ld.style.display = 'none';
+    if (new URLSearchParams(location.search).get('debug') === '1') dumpDebug();
+  }
+
+  function setSubText() {
+    var d = S.data;
+    var total = S.meta.datasets.reduce(function (a, x) { return a + x.count; }, 0);
+    var srcTxt = (S.src !== 'all') ? srcName(S.src) + ' · ' : '';
+    $('sub').innerHTML = srcTxt + (d ? d.name : '') +
+      '　数据更新至 <b>' + (d ? d.updated : '-') + '</b> · 本页 <b>' +
+      (d ? d.count : 0) + '</b> 图 / 全站 <b>' + total + '</b> 图';
+    $('footNote').textContent = '数据提取时间：' + (S.meta.generatedAt || '-') +
+      ' · 来源：汾渭动力煤.xlsx + 国联民生《煤炭行业高频数据》';
   }
 
   function collectYears(d) {
@@ -218,7 +222,6 @@
 
   // ---------------------------------------------------------- 年份开关
 
-  // 年份小圆点的颜色：优先用数据集里该年份的真实线色，否则回落固定色板
   function yearColor(y, i) {
     var d = S.data;
     if (d && d.rows) {
@@ -250,6 +253,14 @@
     });
   }
 
+  // ---------------------------------------------------------- 图表排序（重点排最前）
+
+  function orderedCharts(row) {
+    return row.charts.slice().sort(function (a, b) {
+      return (b.key ? 1 : 0) - (a.key ? 1 : 0);
+    });
+  }
+
   // ---------------------------------------------------------- 渲染
 
   function render() {
@@ -259,16 +270,19 @@
     main.innerHTML = '';
     S.items = [];
 
-    // 数据表在上（四类指标拼成一张宽表）
+    // ① KPI 头条（重点序列的最新值与同比/环比）
+    var hl = buildHeadline();
+    if (hl) main.appendChild(hl);
+
+    // ② 数据表
     main.appendChild(buildTableSection());
 
-    // 图表在下：按指标块依次铺开，每块前加一条分隔标题
+    // ③ 图表块
     S.data.rows.forEach(function (row) {
       main.appendChild(buildRowBlock(row));
     });
 
     if (S.shot) {
-      // 截图模式：跳过懒加载，全部图表立即初始化并固定高度，确保整页截图不空缺
       S.items.forEach(function (it) {
         it.el.style.height = '280px';
         lazyInit(it.el);
@@ -276,9 +290,66 @@
       });
     } else {
       observe();
-      // 首屏直接初始化，避免静态打开时懒加载不触发（四类共 16 图，全部预热）
       S.items.slice(0, 24).forEach(function (it) { lazyInit(it.el); });
     }
+  }
+
+  // KPI 头条：每个指标块取「重点序列」（无 key 则第一张图），展示最新值 + 环比 + 同比
+  function buildHeadline() {
+    var cards = [];
+    S.data.rows.forEach(function (row) {
+      var key = orderedCharts(row).filter(function (c) { return c.key; })[0] || row.charts[0];
+      var t = key.table;
+      if (!t || !t.values || t.values[0] === null) return;
+      cards.push({ row: row, key: key, t: t });
+    });
+    if (!cards.length) return null;
+
+    var strip = document.createElement('div');
+    strip.className = 'headline';
+    cards.forEach(function (o) {
+      var row = o.row, key = o.key, t = o.t;
+      var cur = t.values[0], prev = t.values[1], ly = t.values[2];
+      var date = String(t.labels[0] || '').slice(5);
+
+      var card = document.createElement('div');
+      card.className = 'hl-card' + (key.key ? ' key' : '');
+
+      var h = document.createElement('div');
+      h.className = 'hl-t';
+      h.innerHTML = '<span class="badge-key">重点</span>' +
+        row.name + (key.colName ? ' · ' + key.colName : '');
+      card.appendChild(h);
+
+      var v = document.createElement('div');
+      v.className = 'hl-v';
+      v.innerHTML = '<b>' + fmtVal(cur, key.unit) + '</b>' +
+        (key.unit ? '<small>' + key.unit + '</small>' : '');
+      card.appendChild(v);
+
+      var d = document.createElement('div');
+      d.className = 'hl-d';
+      d.textContent = '更新 ' + date;
+      card.appendChild(d);
+
+      var rel = document.createElement('div');
+      rel.className = 'hl-r';
+      rel.innerHTML = relChip('环比', cur, prev, key.unit) + relChip('同比', cur, ly, key.unit);
+      card.appendChild(rel);
+
+      strip.appendChild(card);
+    });
+    return strip;
+  }
+
+  function relChip(label, cur, base, unit) {
+    if (base === null || base === undefined || isNaN(base)) return '';
+    var diff = cur - base;
+    var pct = base !== 0 ? (diff / Math.abs(base)) * 100 : null;
+    var cls = diff > 0 ? 'up' : (diff < 0 ? 'down' : 'flat');
+    var txt = label + ' ' + (diff >= 0 ? '+' : '') + fmtVal(diff, unit);
+    if (pct !== null && isFinite(pct)) txt += ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)';
+    return '<span class="rel ' + cls + '">' + txt + '</span>';
   }
 
   // 调试钩子（仅 ?debug=1）
@@ -290,15 +361,13 @@
     try {
       S.items.forEach(function (it) {
         var c = it.cfg;
-        var line = c.title + ' inst=' + (!!it.inst) + ' layout=' + (c.layout || 'line') +
-                   ' colors=' + (c.colors || []).join(',');
+        var line = c.title + ' inst=' + (!!it.inst) + ' key=' + (c.key ? 1 : 0);
         if (it.inst) {
           var op = it.inst.getOption();
           var ya = (op.yAxis && op.yAxis[0]) || {};
           line += ' y=[' + ya.min + ',' + ya.max + ']';
           (op.series || []).forEach(function (s) {
-            line += ' | ' + s.name + (s.type === 'bar' ? '[bar]' : '[line]') +
-                    '(' + ((s.lineStyle && s.lineStyle.color) || '') + ')';
+            line += ' | ' + s.name + '[' + s.type + ']';
           });
         }
         out.push(line);
@@ -315,7 +384,6 @@
 
     var head = document.createElement('div');
     head.className = 'row-head';
-    // 单页模式下 tab 已取消，每个指标块自己就是"标题行"，标注数据区间
     var span = rowSpan(row);
     head.innerHTML =
       '<h2>' + row.name +
@@ -326,18 +394,15 @@
     block.appendChild(head);
 
     var grid = document.createElement('div');
-    grid.className = 'grid';
-    // 每块按自己的图数决定列数（各源/各指标块图数不同：2/3/5/7/8/9…）
     var n = Math.max(1, row.charts.length);
-    grid.className += ' cols-' + (n <= 8 ? n : 8);
-    row.charts.forEach(function (cfg) {
+    grid.className = 'grid cols-' + (n <= 8 ? n : 8);
+    orderedCharts(row).forEach(function (cfg) {
       grid.appendChild(makeCard(cfg, row));
     });
     block.appendChild(grid);
     return block;
   }
 
-  // 该指标块的年份覆盖区间（如「2022–2026」；开工率会显示「2024-07 起」）
   function rowSpan(row) {
     var years = [];
     row.charts.forEach(function (c) {
@@ -355,7 +420,7 @@
 
     var title = document.createElement('h2');
     title.className = 'table-title';
-    title.textContent = S.data.name + '周度数据';
+    title.textContent = S.data.name + ' · 周度快照';
     wrap.appendChild(title);
 
     var scroller = document.createElement('div');
@@ -382,19 +447,15 @@
     });
     table.appendChild(tr1);
 
-    // 第二行：各地区（每类指标最后一列 = 合计，加 col-total 高亮）
-    //
-    // ⚠️ 这里**不要**再补一个空的占位 th！
-    // 第一行的「指标」是 rowSpan=2，浏览器已把它占用了第 2 行的第 1 列；
-    // 若此处再加空 th，它会被塞到第 2 列，导致后续 16 个地区表头
-    // 整体右移一列、与数据行错位（表现为「标签和数据错位」）。
+    // 第二行：各地区/序列（重点列加 col-total 高亮）。
+    // ⚠️ 不要补空占位 th：第一行「指标」rowSpan=2 已占用本行第 1 列，
+    //    再补会把所有表头右移一列、与数据错位（历史 bug）。
     var tr2 = document.createElement('tr');
     trows.forEach(function (row) {
-      var n = row.charts.length;
-      row.charts.forEach(function (ch, ci) {
+      orderedCharts(row).forEach(function (ch) {
         var th = document.createElement('th');
         th.textContent = ch.colName;
-        if (ci === n - 1) th.className = 'col-total';
+        if (ch.key) th.className = 'col-total';
         tr2.appendChild(th);
       });
     });
@@ -410,14 +471,12 @@
       th.textContent = label;
       tr.appendChild(th);
       trows.forEach(function (row) {
-        var n = row.charts.length;
-        row.charts.forEach(function (ch, ci) {
+        orderedCharts(row).forEach(function (ch) {
           var td = document.createElement('td');
           var v = (ch.table && ch.table.values) ? ch.table.values[ri] : null;
           td.textContent = fmtVal(v, row.unit);
           var cls = [];
-          if (ci === n - 1) cls.push('col-total');
-          // 环比 / 同比着色：正值红、负值绿
+          if (ch.key) cls.push('col-total');
           if (ri >= 3 && v !== null && v !== undefined && !isNaN(v)) {
             cls.push(v > 0 ? 'up' : (v < 0 ? 'down' : ''));
           }
@@ -435,11 +494,12 @@
 
   function makeCard(cfg, row) {
     var card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card' + (cfg.key ? ' key' : '');
 
     var head = document.createElement('div');
     head.className = 'card-head';
-    head.innerHTML = '<span class="t">' + cfg.title + '</span>' +
+    head.innerHTML = (cfg.key ? '<span class="badge-key">重点</span>' : '') +
+                     '<span class="t">' + cfg.title + '</span>' +
                      (cfg.unit ? '<span class="u">' + cfg.unit + '</span>' : '');
     card.appendChild(head);
 
@@ -489,17 +549,8 @@
     if (idx < 0) return '最新：<b>-</b>';
     var cur = curS[idx];
     var txt = '最新：<b>' + fmtVal(cur, cfg.unit) + '</b>';
-    // 同比：取去年序列在「同期」最近的采样点。本站在日轴上按周布点、各年相位不同
-    //    （2026 落在 idx%7==6、2025 落在 idx%7==0），严格同索引会取到空值；日度数据下
-    //    本算法自然退化为「同一天」。⚠️ 不要用 lastOf(去年序列)：那是去年 12-31 的年末低值，
-    //    会拿「本年 9 月」比「去年 12 月」，算出方向相反的错误百分比。
     var prvS = cfg.series[n - 2] || [];
-    var prv = null, best = 99;
-    for (var j = Math.max(0, idx - 10); j <= Math.min(prvS.length - 1, idx + 10); j++) {
-      if (prvS[j] === null || prvS[j] === undefined) continue;
-      var dist = Math.abs(j - idx);
-      if (dist < best) { best = dist; prv = prvS[j]; }
-    }
+    var prv = (idx < prvS.length && prvS[idx] !== undefined) ? prvS[idx] : null;
     if (prv !== null && prv !== 0) {
       var d = cur - prv;
       var pct = (d / Math.abs(prv)) * 100;
@@ -556,7 +607,6 @@
   }
 
   function buildOption(cfg, yMin, yMax) {
-    if (cfg.layout === 'monthly') return buildMonthlyOption(cfg, yMin, yMax);
     var series = [];
     var maxYear = Math.max.apply(null, cfg.years);
     cfg.years.forEach(function (y, i) {
@@ -606,12 +656,7 @@
         axisTick: { show: false },
         axisLabel: {
           fontSize: 10, color: '#8a94a8', hideOverlap: true,
-          formatter: cfg.xDayLabels
-            ? function (md) {
-                md = String(md);
-                return md.slice(-2) === '01' ? (parseInt(md.slice(0, 2), 10) + '/1') : '';
-              }
-            : monthLabel,
+          formatter: monthLabel,
         },
         splitLine: { show: false },
       },
@@ -632,111 +677,6 @@
     };
   }
 
-  // 月度数据: 从 366 长序列里按月份取「当月最后一个有效值」（即月末点）
-  function monthlyValues(series366) {
-    var out = new Array(12).fill(null);
-    for (var i = 0; i < series366.length; i++) {
-      var v = series366[i];
-      if (v === null || v === undefined || isNaN(v)) continue;
-      var md = S.xaxis[i];
-      if (!md) continue;
-      var m = parseInt(md.split('-')[0], 10);
-      if (m >= 1 && m <= 12) out[m - 1] = v;
-    }
-    return out;
-  }
-
-  // 月度供给结构: 柱状图 (X 轴 = 12 个月, series = 年份分组柱)
-  function buildMonthlyOption(cfg, yMin, yMax) {
-    var months = ['1月', '2月', '3月', '4月', '5月', '6月',
-                  '7月', '8月', '9月', '10月', '11月', '12月'];
-    var series = [];
-    var maxYear = Math.max.apply(null, cfg.years);
-    var nLabel = cfg.labelMonths || 0;
-    var labelSet = {}, dashIdx = -1;
-    if (nLabel || cfg.dashLast) {
-      var ci = cfg.years.indexOf(maxYear);
-      if (ci >= 0) {
-        var cv = monthlyValues(cfg.series[ci]);
-        var nz = [];
-        for (var k = 0; k < cv.length; k++) if (cv[k] !== null && cv[k] !== undefined) nz.push(k);
-        for (var t = Math.max(0, nz.length - nLabel); t < nz.length; t++) labelSet[nz[t]] = 1;
-        if (cfg.dashLast && nz.length) dashIdx = nz[nz.length - 1];
-      }
-    }
-    cfg.years.forEach(function (y, i) {
-      if (S.hidden[y]) return;
-      var color = seriesColor(cfg, i);
-      var isCurrent = (y === maxYear);
-      var vals = monthlyValues(cfg.series[i]);
-      var data = vals;
-      if (isCurrent && (nLabel || cfg.dashLast)) {
-        data = vals.map(function (v, mi) {
-          if (v === null || v === undefined) return v;
-          var o = { value: v };
-          if (labelSet[mi]) {
-            o.label = { show: true, position: 'top', fontSize: 9, color: '#5a657c',
-                        formatter: function (p) { return (+p.value).toFixed(1); } };
-          }
-          if (mi === dashIdx) {
-            o.itemStyle = { borderColor: '#FF0000', borderWidth: 1.3, borderType: 'dashed' };
-          }
-          return o;
-        });
-      }
-      series.push({
-        name: String(y), type: 'bar', data: data,
-        itemStyle: { color: color }, barMaxWidth: 20,
-        emphasis: { focus: 'series' }, z: isCurrent ? 10 : 2,
-      });
-    });
-    var unit = cfg.unit;
-    return {
-      animation: false,
-      backgroundColor: 'transparent',
-      grid: { left: 8, right: 12, top: 30, bottom: 4, containLabel: true },
-      legend: {
-        top: 2, left: 'center', itemWidth: 14, itemHeight: 8, itemGap: 10,
-        textStyle: { fontSize: 10.5, color: '#5a657c' },
-        data: cfg.years.map(String),
-        selected: cfg.years.reduce(function (o, y) { o[y] = !S.hidden[y]; return o; }, {}),
-      },
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: 'rgba(255,255,255,.97)',
-        borderColor: '#dfe4ee', borderWidth: 1,
-        textStyle: { color: '#1c2536', fontSize: 11.5 },
-        axisPointer: { type: 'shadow' },
-        formatter: function (ps) {
-          if (!ps || !ps.length) return '';
-          var h = '<div style="font-weight:600;margin-bottom:3px">' + ps[0].axisValue + '</div>';
-          ps.forEach(function (p) {
-            if (p.value === null || p.value === undefined) return;
-            h += '<div style="display:flex;align-items:center;gap:5px;line-height:1.6">' +
-                 p.marker + '<span style="flex:1">' + p.seriesName + '</span>' +
-                 '<b style="font-variant-numeric:tabular-nums">' + fmtVal(p.value, unit) + '</b></div>';
-          });
-          return h || '';
-        },
-      },
-      xAxis: {
-        type: 'category', data: months,
-        axisLine: { lineStyle: { color: '#c9d1e0' } },
-        axisTick: { show: false },
-        axisLabel: { fontSize: 10, color: '#8a94a8' },
-        splitLine: { show: false },
-      },
-      yAxis: {
-        type: 'value', scale: !(S.zero || cfg.zeroBase), min: yMin, max: yMax,
-        axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { fontSize: 10, color: '#8a94a8', formatter: function (v) { return fmtAxis(v, unit); } },
-        splitLine: { lineStyle: { color: '#eef1f7' } },
-      },
-      series: series,
-    };
-  }
-
-  // 同行统一 Y 轴范围
   function rowRange(row) {
     var lo = Infinity, hi = -Infinity, anyZero = false;
     row.charts.forEach(function (cfg) {
@@ -744,7 +684,6 @@
       cfg.years.forEach(function (y, i) {
         if (S.hidden[y]) return;
         var a = cfg.series[i] || [];
-        if (cfg.layout === 'monthly') a = monthlyValues(a);
         for (var k = 0; k < a.length; k++) {
           var v = a[k];
           if (v === null || v === undefined) continue;
@@ -765,7 +704,6 @@
     cfg.years.forEach(function (y, i) {
       if (S.hidden[y]) return;
       var a = cfg.series[i] || [];
-      if (cfg.layout === 'monthly') a = monthlyValues(a);
       for (var k = 0; k < a.length; k++) {
         var v = a[k];
         if (v === null || v === undefined) continue;
@@ -851,7 +789,8 @@
       t = setTimeout(function () {
         S.items.forEach(function (it) { if (it.inst) it.inst.resize(); });
       }, 160);
-    });  }
+    });
+  }
 
   bindUI();
 
@@ -861,14 +800,32 @@
       var rows = (S.data && S.data.rows) || [];
       return {
         src: S.src,
+        dsId: S.dsId,
+        dsName: S.data ? S.data.name : null,
         sources: (S.meta && S.meta.sources || []).map(function (s) { return s.id; }),
         datasets: (S.meta && S.meta.datasets || []).length,
+        visibleDatasets: visibleDatasets().map(function (d) { return d.id; }),
         rows: rows.length,
         charts: rows.reduce(function (a, r) { return a + r.charts.length; }, 0),
+        keyCharts: rows.reduce(function (a, r) {
+          return a + r.charts.filter(function (c) { return c.key; }).length; }, 0),
         years: S.years.slice(),
       };
     },
-    setSrc: function (id) { S.src = id; mount(true); return window.__TC.state(); },
+    setSrc: function (id) {
+      S.src = id;
+      renderSourceToggles();
+      renderTabs();
+      var list = visibleDatasets();
+      if (list.length) switchTo(list[0].id, true);
+      return window.__TC.state();
+    },
+    setDs: function (id) { switchTo(id, true); return window.__TC.state(); },
+    tabs: function () {
+      var box = $('tabs');
+      return box ? Array.prototype.map.call(box.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() + (b.classList.contains('active') ? '*' : ''); }) : [];
+    },
     err: null,
   };
   window.addEventListener('error', function (e) {
