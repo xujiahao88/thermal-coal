@@ -317,8 +317,9 @@
 
       var h = document.createElement('div');
       h.className = 'hl-t';
-      h.innerHTML = '<span class="badge-key">重点</span>' +
-        row.name + (key.colName ? ' · ' + key.colName : '');
+      h.innerHTML = (key.key ? '<span class="badge-key">重点</span>' : '') +
+        '<b>' + key.colName + '</b>' +
+        '<span class="hl-g" title="' + row.name + '">' + row.name + '</span>';
       card.appendChild(h);
 
       var v = document.createElement('div');
