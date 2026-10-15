@@ -45,10 +45,18 @@
   // X 轴刻度：只在「每月 1 号」打一个标签，其余返回空串。
   // 366 点 category 轴若逐点都返回「N月」，ECharts 抽稀后会出现
   // 「01月 01月 02月 02月 …」的重复标签，故必须只打首日。
+  //
+  // ⚠️ 关键：光靠「formatter 返回空串」是不够的。
+  // 轴上 354 个空标签会让 ECharts 的 hideOverlap 判定失准，把刻度**抽稀到只剩
+  // 1~2 个**（实测 420px 宽只剩「1月 3月」，更窄就只剩「1月」）。
+  // 正确做法是把「哪几个点出标签」交给 axisLabel.interval 函数控制
+  // （isMonthStart），并**关掉 hideOverlap** —— 实测 420px 起稳定输出 12 个月。
+  function isMonthStart(md) {
+    return String(md).slice(-2) === '01';
+  }
   function monthLabel(md) {
-    var p = String(md).split('-');
-    if (p[1] !== '01') return '';
-    return (parseInt(p[0], 10)) + '月';
+    if (!isMonthStart(md)) return '';
+    return (parseInt(String(md).slice(0, 2), 10)) + '月';
   }
   function dayLabel(md) {
     var p = String(md).split('-');
@@ -661,7 +669,10 @@
         axisLine: { lineStyle: { color: '#c9d1e0' } },
         axisTick: { show: false },
         axisLabel: {
-          fontSize: 10, color: '#8a94a8', hideOverlap: true,
+          fontSize: 10, color: '#8a94a8',
+          // 只保留每月 1 号的刻度；用 interval 函数控制显隐（不能用 hideOverlap，
+          // 见 monthLabel 处的说明），保证 12 个月标签完整且不重复。
+          interval: function (index, value) { return isMonthStart(value); },
           formatter: monthLabel,
         },
         splitLine: { show: false },
